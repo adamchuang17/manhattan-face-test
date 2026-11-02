@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>曼哈頓｜兩張照片比對 V4</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eff4f8;color:#18324b;font:18px/1.65 system-ui,sans-serif}main{max-width:840px;margin:auto;padding:26px 18px 40px}h1{font-size:29px;line-height:1.3;margin:10px 0}h2{font-size:21px;margin:0 0 10px}p{margin:10px 0}.eyebrow{font-size:13px;letter-spacing:2px;color:#4e728b}.card{background:white;border-radius:20px;padding:22px;margin:18px 0;box-shadow:0 5px 24px #18324b0b}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid .card{margin:0;min-width:0}input{display:block;max-width:100%;font-size:16px;margin:16px 0}canvas{display:block;width:100%;height:auto;border-radius:12px}canvas[hidden],button[hidden]{display:none}button{border:0;border-radius:12px;padding:15px 20px;background:#155bc1;color:white;font:700 19px system-ui;cursor:pointer;margin:5px 4px 5px 0}button:disabled{opacity:.45;cursor:default}.secondary{background:#e5edf6;color:#18324b}small,.hint{font-size:14px;color:#50657a}#status,#result{white-space:pre-wrap;overflow-wrap:anywhere}#status{border-left:4px solid #155bc1;padding-left:12px}#result{font-size:22px;font-weight:700}.details{font-size:15px;color:#50657a;white-space:pre-wrap}a{color:#155bc1}.pill{display:inline-block;background:#e2f5ec;color:#236146;padding:3px 10px;border-radius:30px;font-size:13px}@media(max-width:600px){.grid{grid-template-columns:1fr}h1{font-size:27px}}
+</style></head>
+<body><main>
+<div class="eyebrow">MANHATTAN · 技術測試 V4</div>
+<h1>兩張照片，是同一人嗎？</h1>
+<p>選一張參考照片，再拍一張新照片，測試人臉特徵比對。</p><span class="pill">照片與特徵僅在目前裝置處理</span>
+<div class="card"><h2>① 等待比對模型就緒</h2><p id="status" role="status" aria-live="polite">正在載入比對程式…</p><button id="retry" hidden>重新載入</button><small>首次下載約數 MB，可能需要數十秒。這不是 V3 的單純臉孔偵測；速度要重新測量。</small></div>
+<div class="grid">
+<section class="card"><h2>② 選擇參考照片</h2><p class="hint">從相簿選一張清楚、單人的正面照。</p><input id="reference" type="file" accept="image/*" aria-label="選擇參考照片"><p id="refState" class="hint" role="status">尚未選取</p><canvas id="refCanvas" hidden></canvas></section>
+<section class="card"><h2>③ 拍一張新照片</h2><p class="hint">可稍微改變表情，保持光線充足、臉部清楚。</p><input id="probe" type="file" accept="image/*" capture="user" aria-label="拍攝或選擇待比對照片"><p id="probeState" class="hint" role="status">尚未選取</p><canvas id="probeCanvas" hidden></canvas></section>
+</div>
+<section class="card"><h2>④ 開始比對</h2><button id="compare" disabled>比對兩張照片</button><button id="clear" class="secondary">清除兩張照片</button><p id="result" role="status" aria-live="polite">請先選取兩張照片</p><p id="details" class="details"></p><small>結果僅供技術測試，不能證明身分，也不能用來決定放行。沒有活體偵測；翻拍照片也可能得到相近結果。</small></section>
+<details class="card"><summary>如何解讀測試結果</summary><p>特徵距離越小，兩張臉的模型特徵越接近；不是「相同機率」，不顯示百分比。</p><p>本頁暫用：距離小於 0.50 顯示「特徵接近」；0.50 至 0.65 顯示「無法確認」；大於 0.65 顯示「特徵差異較大」。這些測試界線尚未依曼哈頓場景驗證。</p><p>請先測自己的兩張不同照片，再請同意協助的人作不同人測試。不要用同一張照片的結果推論準確率。</p></details>
+<p class="hint">照片及特徵不寫入伺服器或網頁永久儲存。清除或離開頁面會釋放本頁資料；手機相機是否另存照片，依手機設定。載入程式與模型會連線至 jsDelivr；本頁沒有照片上傳程式。</p>
+<p class="hint"><a href="./">返回 V3 人臉偵測</a> · <a href="https://github.com/justadudewhohacks/face-api.js" target="_blank" rel="noopener noreferrer">模型程式來源</a></p>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const slots=[{input:$('reference'),canvas:$('refCanvas'),label:$('refState'),source:null,descriptor:null,version:0,reading:false},{input:$('probe'),canvas:$('probeCanvas'),label:$('probeState'),source:null,descriptor:null,version:0,reading:false}];
+let ready=false,busy=false;
+const statusEl=$('status'),resultEl=$('result'),detailsEl=$('details'),compareBtn=$('compare');
+function update(){compareBtn.disabled=!ready||busy||slots.some(s=>!s.source||s.reading);slots.forEach(s=>s.input.disabled=busy);$('clear').disabled=busy}
+function eraseSlot(s){s.version++;s.input.value='';if(s.descriptor)s.descriptor.fill(0);s.descriptor=null;if(s.source){s.source.width=1;s.source.height=1}s.source=null;s.canvas.width=1;s.canvas.height=1;s.canvas.hidden=true;s.label.textContent='尚未選取';s.reading=false}
+function clearAll(){slots.forEach(eraseSlot);resultEl.textContent='請先選取兩張照片';detailsEl.textContent='';update()}
+async function readPhoto(s){
+ const file=s.input.files[0];if(!file)return;const version=++s.version;
+ if(s.descriptor)s.descriptor.fill(0);s.descriptor=null;s.source=null;s.canvas.hidden=true;s.reading=true;resultEl.textContent='照片讀取中…';detailsEl.textContent='';s.label.textContent='正在讀取…';update();
+ let url;
+ try{
+  if(file.type&&!file.type.startsWith('image/'))throw Error('請選擇圖片檔案');
+  url=URL.createObjectURL(file);const img=new Image();img.src=url;await img.decode();if(version!==s.version)return;
+  const scale=Math.min(1,1200/Math.max(img.naturalWidth,img.naturalHeight));
+  const source=document.createElement('canvas');source.width=Math.max(1,Math.round(img.naturalWidth*scale));source.height=Math.max(1,Math.round(img.naturalHeight*scale));source.getContext('2d').drawImage(img,0,0,source.width,source.height);
+  s.source=source;s.canvas.width=source.width;s.canvas.height=source.height;s.canvas.getContext('2d').drawImage(source,0,0);s.canvas.hidden=false;s.label.textContent='照片已載入';resultEl.textContent=slots.every(x=>x.source)?'兩張照片已載入，可以開始比對':'請再選取另一張照片';
+ }catch(e){if(version===s.version){s.label.textContent='讀取失敗，請改用 JPEG 或 PNG。';resultEl.textContent='照片尚未準備完成'}}
+ finally{if(url)URL.revokeObjectURL(url);if(version===s.version)s.reading=false;update()}
+}
+slots.forEach(s=>s.input.addEventListener('change',()=>readPhoto(s)));
+async function describe(s,index){
+ if(s.descriptor)return s.descriptor;
+ const found=await faceapi.detectAllFaces(s.source,new faceapi.TinyFaceDetectorOptions({inputSize:416,scoreThreshold:0.5})).withFaceLandmarks(true).withFaceDescriptors();
+ if(found.length!==1)throw Error((index===0?'參考照片':'新照片')+(found.length===0?'未找到清楚的臉孔，請重新拍攝。':'有多張臉，請改用只有一人的照片。'));
+ const item=found[0],box=item.detection.box;
+ if(box.width<100||box.height<100||item.detection.score<0.7){item.descriptor.fill(0);throw Error((index===0?'參考照片':'新照片')+'臉部太小或不夠清楚，請靠近、正面拍攝。')}
+ const ctx=s.canvas.getContext('2d');ctx.drawImage(s.source,0,0);ctx.strokeStyle='#00ba7c';ctx.lineWidth=Math.max(3,s.canvas.width/180);ctx.strokeRect(box.x,box.y,box.width,box.height);
+ s.descriptor=item.descriptor;s.label.textContent='已擷取單張臉孔特徵';return s.descriptor;
+}
+compareBtn.addEventListener('click',async()=>{
+ if(compareBtn.disabled)return;busy=true;update();resultEl.textContent='正在比對，請稍候…';detailsEl.textContent='';
+ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+ const start=performance.now(),cached=!!slots[0].descriptor;
+ try{
+ const a=await describe(slots[0],0),b=await describe(slots[1],1);const distance=faceapi.euclideanDistance(a,b);
+ if(!Number.isFinite(distance))throw Error('模型結果無效，請重新載入頁面。');
+ resultEl.textContent=distance<0.50?'特徵接近 · 測試上偏向同一人':distance>0.65?'特徵差異較大 · 測試上偏向不同人':'無法確認 · 請改用清楚的正面照片';
+ detailsEl.textContent='特徵距離：'+distance.toFixed(3)+'（越小越接近，不是機率）\n本次比對耗時：'+((performance.now()-start)/1000).toFixed(2)+' 秒'+(cached?'（重用參考照片特徵）':'（含兩張照片特徵擷取）');
+ }catch(e){resultEl.textContent='無法確認';detailsEl.textContent=e.message}finally{busy=false;update()}
+});
+$('clear').onclick=clearAll;$('retry').onclick=()=>location.reload();window.addEventListener('pagehide',clearAll);
+async function init(){
+ const start=performance.now();
+ try{
+ statusEl.textContent='正在下載並初始化三個模型…首次使用可能需要數十秒。';
+ await faceapi.tf.ready();
+ const base='https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+ let completed=0;
+ await Promise.all([faceapi.nets.tinyFaceDetector,faceapi.nets.faceLandmark68TinyNet,faceapi.nets.faceRecognitionNet].map(async net=>{await net.loadFromUri(base);completed++;statusEl.textContent='模型載入進度：'+completed+' / 3'}));
+ ready=true;statusEl.textContent='比對模型已就緒 · 初始化 '+((performance.now()-start)/1000).toFixed(2)+' 秒';
+ }catch(e){statusEl.textContent='模型載入失敗，請檢查網路後重新載入。\n'+e.message;$('retry').hidden=false}finally{update()}
+}
+const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js';script.crossOrigin='anonymous';script.onload=init;script.onerror=()=>{statusEl.textContent='比對程式下載失敗，請檢查網路後重試。';$('retry').hidden=false};document.head.appendChild(script);
+</script></body></html>
