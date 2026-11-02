@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>曼哈頓大樓｜人臉偵測 V3</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eff4f8;color:#18324b;font:18px/1.6 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:28px 18px}h1{font-size:28px;margin:6px 0}p{margin:10px 0}.card{background:white;border-radius:20px;padding:22px;margin:18px 0;box-shadow:0 5px 24px #18324b0b}.tag{font-size:14px;letter-spacing:2px;color:#47708c}button,.pick{display:inline-block;background:#155bc1;color:white;border:0;border-radius:12px;padding:14px 18px;font:700 18px system-ui;cursor:pointer;margin:5px 4px 5px 0}button:disabled{opacity:.45;cursor:wait}.secondary{background:#e5edf6;color:#18324b}input{max-width:100%;margin:12px 0}canvas{width:100%;height:auto;display:block;border-radius:12px;background:#e5edf6}#status{white-space:pre-wrap;overflow-wrap:anywhere;border-left:4px solid #155bc1;padding-left:12px}small{font-size:14px;color:#50657a}#retry[hidden]{display:none}
+</style>
+<main><div class="tag">MANHATTAN · 技術測試</div><h1>手機人臉偵測 V3</h1><p>拍一張照片，框出臉孔並測量時間。</p>
+<div class="card"><strong>① 等待模型就緒</strong><p id="status" role="status" aria-live="polite">正在下載並初始化模型…首次使用可能需要較久。</p><button id="retry" hidden>重新載入模型</button><small>這一版只找出臉的位置，不辨識姓名、戶號或身分。</small></div>
+<div class="card"><strong>② 拍照或選取測試照片</strong><br><input id="photo" type="file" accept="image/*" capture="user" aria-label="拍照或選取測試照片"><br><button id="detect" disabled>偵測人臉</button><button class="secondary" id="clear">清除照片</button><p id="result" role="status" aria-live="polite">尚未選取照片</p><canvas id="preview" width="640" height="400" hidden></canvas></div>
+<small>影像僅在目前網頁的記憶體處理；本程式不將照片傳送至伺服器，也不建立住戶資料庫。關閉或清除即釋放網頁影像；相機或相簿是否另存原始照片，依手機設定。首次載入會連線下載 MediaPipe 程式與模型。</small></main>
+<script type="module">
+const $=id=>document.getElementById(id), status=$('status'),result=$('result'),canvas=$('preview'),ctx=canvas.getContext('2d'),button=$('detect'),input=$('photo');
+let detector=null,source=null,busy=false,generation=0,loading=false;
+const pkg='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18';
+function update(){button.disabled=!detector||!source||busy}
+async function init(){
+ if(loading)return;loading=true;$('retry').hidden=true;status.textContent='正在下載並初始化模型…首次使用可能需要較久。';const start=performance.now();
+ try{
+  const {FaceDetector,FilesetResolver}=await import(pkg+'/vision_bundle.mjs');
+  const files=await FilesetResolver.forVisionTasks(pkg+'/wasm');
+  detector=await FaceDetector.createFromOptions(files,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',delegate:'CPU'},runningMode:'IMAGE',minDetectionConfidence:0.6});
+  status.textContent='模型已就緒 · 初始化 '+((performance.now()-start)/1000).toFixed(2)+' 秒';
+ }catch(e){status.textContent='模型載入失敗。請確認網路正常，並透過 HTTPS 網址開啟。\n錯誤：'+e.message;$('retry').hidden=false}
+ finally{loading=false;update()}
+}
+function clear(){generation++;input.value='';source=null;canvas.width=640;canvas.height=400;ctx.clearRect(0,0,640,400);canvas.hidden=true;result.textContent='尚未選取照片';update()}
+input.addEventListener('change',async()=>{
+ const file=input.files[0];if(!file)return;const token=++generation;source=null;update();result.textContent='正在讀取照片…';
+ if(!file.type.startsWith('image/')){result.textContent='請選擇圖片檔案';return}
+ const url=URL.createObjectURL(file);
+ try{const img=new Image();img.src=url;await img.decode();if(token!==generation)return;
+ const scale=Math.min(1,1280/Math.max(img.naturalWidth,img.naturalHeight));canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+ source=document.createElement('canvas');source.width=canvas.width;source.height=canvas.height;source.getContext('2d').drawImage(img,0,0,source.width,source.height);ctx.drawImage(source,0,0);canvas.hidden=false;result.textContent='照片已載入，請按「偵測人臉」。';
+ }catch(e){result.textContent='照片讀取失敗，請改用 JPEG 或 PNG。'}finally{URL.revokeObjectURL(url);update()}
+});
+button.addEventListener('click',async()=>{
+ if(!source||!detector||busy)return;busy=true;update();result.textContent='正在偵測…';
+ await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+ try{const start=performance.now();const found=detector.detect(source);const ms=performance.now()-start;ctx.drawImage(source,0,0);ctx.strokeStyle='#00d28b';ctx.lineWidth=Math.max(3,canvas.width/180);
+ for(const face of found.detections){const b=face.boundingBox;ctx.strokeRect(b.originX,b.originY,b.width,b.height)}
+ result.textContent=found.detections.length?'偵測到 '+found.detections.length+' 張臉 · 偵測耗時 '+ms.toFixed(0)+' 毫秒':'沒有偵測到臉孔，請確認光線與正面角度。';
+ }catch(e){result.textContent='偵測失敗：'+e.message}finally{busy=false;update()}
+});
+$('clear').onclick=clear;$('retry').onclick=init;window.addEventListener('pagehide',()=>{clear();detector?.close();detector=null});init();
+</script></html>
